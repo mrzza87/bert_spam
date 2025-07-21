@@ -1,19 +1,23 @@
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify
 import joblib
+import requests
 
-# Load model & vectorizer
+# === Load ML model ===
 model = joblib.load("lr_model.pkl")
 vectorizer = joblib.load("cv_encoder.pkl")
 
+# === Telegram Bot Token ===
+TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+
 app = Flask(__name__)
 
+# Health check
 @app.route("/", methods=["GET"])
 def home():
-    return {
-        "status": "ok",
-        "message": "✅ News Sentiment API is running! Use POST /predict"
-    }
+    return {"status": "ok", "message": "✅ Sentiment API + Telegram webhook running!"}
 
+# Predict endpoint
 @app.route("/predict", methods=["POST"])
 def predict():
     data = request.json
@@ -24,35 +28,28 @@ def predict():
     X = vectorizer.transform([text])
     pred = model.predict(X)[0]
     prob = model.predict_proba(X).max()
-
     return jsonify({
         "prediction": str(pred),
         "confidence": round(float(prob), 2)
     })
 
-@app.route("/test", methods=["GET"])
-def test_form():
-    html = """
-    <h1>📰 News Sentiment API Test</h1>
-    <form method="post" action="/predict" onsubmit="event.preventDefault();predict()">
-      <textarea id="input" rows="4" cols="50" placeholder="Type your news headline here"></textarea><br><br>
-      <button type="submit">Predict Sentiment</button>
-    </form>
-    <p id="result"></p>
-    <script>
-      async function predict() {
-        const text = document.getElementById("input").value;
-        const res = await fetch('/predict', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({text: text})
-        });
-        const data = await res.json();
-        document.getElementById("result").innerHTML = JSON.stringify(data);
-      }
-    </script>
-    """
-    return render_template_string(html)
+# === Telegram webhook route ===
+@app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
+def telegram_webhook():
+    data = request.json
+    chat_id = data["message"]["chat"]["id"]
+    text = data["message"]["text"]
+
+    # Run prediction
+    X = vectorizer.transform([text])
+    pred = model.predict(X)[0]
+    prob = model.predict_proba(X).max()
+    reply = f"Prediction: {pred} (Confidence: {prob:.2f})"
+
+    # Send reply back to Telegram
+    requests.post(f"{TELEGRAM_API}/sendMessage", json={"chat_id": chat_id, "text": reply})
+    return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
